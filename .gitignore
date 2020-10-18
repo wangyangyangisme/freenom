@@ -1,0 +1,9 @@
+.vscode/*
+.idea/
+config.toml
+vendor/*
+go.sum
+*.exe
+*.exe~
+freenom-ddns
+freenom-ddns~
