@@ -9,7 +9,8 @@ Please type Freenom account(s)
 [System]
 Account = "admin"
 Password = "admin"
-CronTiming = 1
+ReNewTiming = 14400
+DdnsTiming = 5
 
 [[Accounts]]
 Username = "xxx@xxx.com"
