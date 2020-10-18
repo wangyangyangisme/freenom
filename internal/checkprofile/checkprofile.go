@@ -1,6 +1,7 @@
 package checkprofile
 
 import (
+	"errors"
 	"log"
 	"path/filepath"
 
@@ -17,13 +18,16 @@ type Config struct {
 type System struct {
 	Account    string
 	Password   string
-	CronTiming uint64
+	ReNewTiming uint64
+	DdnsTiming uint64
 }
 
 // Account struct
 type Account struct {
 	Username string
 	Password string
+	ZoneName   string
+	RecordName string
 }
 
 // ReadConf will decode data
@@ -39,6 +43,10 @@ func ReadConf(filename string) (*Config, error) {
 	}
 	if _, err = toml.DecodeFile(filename, &conf); err != nil {
 		log.Fatal(err)
+	}
+
+	if conf.System.DdnsTiming < 5 || conf.System.ReNewTiming < 5 {
+		log.Fatal(errors.New("err"))
 	}
 	return conf, err
 }

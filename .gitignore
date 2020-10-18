@@ -7,3 +7,4 @@ go.sum
 *.exe~
 freenom-ddns
 freenom-ddns~
+*.txt

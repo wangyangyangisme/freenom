@@ -7,6 +7,6 @@ import (
 // Run new cron job
 func Run(run func(), timing uint64) {
 	cronJob := gocron.NewScheduler()
-	cronJob.Every(timing).Second().Do(run)
+	cronJob.Every(timing).Minute().Do(run)
 	<-cronJob.Start()
 }

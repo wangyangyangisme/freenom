@@ -9,17 +9,18 @@ import (
 	"freenom-ddns/server/httpservice"
 )
 
+func task(f *freenom.Freenom) {
 
-//zone_name="tfly.ml"   # 要做指向的根域名
-//record_name="www.tfly.ml"   # 要做指向的记录
+	for _,v := range f.Users {
+		v.DomainList().RenewDomains()
 
-func task(f *freenom.Freenom, acs int) {
-	var i int
-	for i = 0; i < acs; i++ {
-		f.GetIp().Login(i).RenewDomains(i) // .UpdateRecord(i,"ufly.ml","BT","45.76.105.88")
-		for _, d := range f.Users[i].Domains {
-			log.Println("log: ", d)
-		}
+	}
+}
+
+func ddns(f *freenom.Freenom) {
+
+	for _,v := range f.Users {
+		v.DomainList().UpdateRecord(v.ZoneName,v.RecordName)
 	}
 }
 
@@ -28,10 +29,15 @@ func main() {
 	config, _ := checkprofile.ReadConf("./config.toml")
 	f := freenom.GetInstance()
 	f.InputAccount(config)
-	task(f, len(config.Accounts))
+	task(f)
+	ddns(f)
 	go scheduler.Run(func() {
-		task(f, len(config.Accounts))
-	}, config.System.CronTiming)
+		task(f)
+	}, config.System.ReNewTiming)
+
+	go scheduler.Run(func() {
+		ddns(f)
+	}, config.System.DdnsTiming)
 
 	httpservice.Run(f, config)
 }

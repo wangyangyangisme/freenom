@@ -1,8 +1,11 @@
 [System]
 Account = "xxx@qq.com"
 Password = "xxx"
-CronTiming = 5
+ReNewTiming = 14400
+DdnsTiming = 5
 
 [[Accounts]]
 Username = "xxx@qq.com"
 Password = "xxx"
+ZoneName = "xxx.ml"
+RecordName = "x"

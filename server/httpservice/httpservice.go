@@ -22,7 +22,7 @@ type PageData struct {
 type User struct {
 	UserName   string
 	CheckTimes int
-	Domains    []Domain
+	Domains    map[string]Domain
 }
 
 // Domain is translate freenom map data
@@ -62,7 +62,6 @@ func makeHandler(fn func(http.ResponseWriter, *http.Request), config *checkprofi
 
 func renderTemplate(w http.ResponseWriter, tmpl string, data *freenom.Freenom) {
 	var pdata = getPageData(&PageData{}, data)
-
 	t, err := template.ParseFiles("./resources/html/" + tmpl + ".html")
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -80,12 +79,15 @@ func getPageData(pdata *PageData, data *freenom.Freenom) *PageData {
 	for _, user := range data.Users {
 		pdata.Users[cnt].UserName = user.UserName
 		pdata.Users[cnt].CheckTimes = user.CheckTimes
-		pdata.Users[cnt].Domains = make([]Domain, len(user.Domains))
-		for ii, domain := range user.Domains {
-			pdata.Users[cnt].Domains[ii].DomainName = domain.DomainName
-			pdata.Users[cnt].Domains[ii].Days = domain.Days
-			pdata.Users[cnt].Domains[ii].ID = domain.ID
-			pdata.Users[cnt].Domains[ii].RenewState = domain.RenewState
+		pdata.Users[cnt].Domains = make(map[string]Domain)
+		for k, domain := range user.Domains {
+			d := Domain{
+				DomainName: domain.DomainName,
+				Days:       domain.Days,
+				ID:         domain.ID,
+				RenewState: domain.RenewState,
+			}
+			pdata.Users[cnt].Domains[k] = d
 		}
 		cnt++
 	}

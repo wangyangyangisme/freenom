@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
+	"os"
 	"regexp"
 	"strconv"
 	"strings"
@@ -52,17 +53,23 @@ type Domain struct {
 type User struct {
 	UserName   string
 	PassWord   string
+	ZoneName   string
+	RecordName string
 	CheckTimes int
-	Domains    map[int]*Domain
+	ReNewTiming string
+	DdnsTiming string
+	Ip         string  //ddns
+	Domains    map[string]*Domain
+	cookiejar *cookiejar.Jar
+	client    *http.Client
+	token     string
+	list map[int]map[string]string
 }
 
 // Freenom for opterate FreenomAPI
 type Freenom struct {
-	cookiejar *cookiejar.Jar
-	client    *http.Client
-	Users     map[int]*User
-	token     string
-	list map[int]map[string]string
+	Users     map[string]*User
+
 }
 
 var instance *Freenom
@@ -89,33 +96,47 @@ var (
 func GetInstance() *Freenom {
 	once.Do(func() {
 		instance = &Freenom{}
-		instance.Users = make(map[int]*User)
-		instance.list = make(map[int]map[string]string)
-		instance.cookiejar, _ = cookiejar.New(&cookiejar.Options{PublicSuffixList: publicsuffix.List})
-		instance.client = &http.Client{Timeout: timeout * time.Second, Jar: instance.cookiejar}
+		instance.Users = make(map[string]*User)
 	})
 	return instance
 }
 
 // InputAccount input user data
 func (f *Freenom) InputAccount(config *checkprofile.Config) *Freenom {
-	for i, a := range config.Accounts {
-		f.Users[i] = &User{
+	for _, a := range config.Accounts {
+		f.Users[a.Username] = &User{
 			UserName:   a.Username,
 			PassWord:   a.Password,
 			CheckTimes: 0,
+			ZoneName:   a.ZoneName,
+			RecordName: a.RecordName,
+			list: make(map[int]map[string]string),
 		}
+		f.Users[a.Username].cookiejar,_ = cookiejar.New(&cookiejar.Options{PublicSuffixList: publicsuffix.List})
+		f.Users[a.Username].client = &http.Client{Timeout: timeout * time.Second, Jar: f.Users[a.Username].cookiejar}
+
+
+
+
+		ip, err := ioutil.ReadFile(a.Username + ".txt")
+		if err != nil {
+			log.Println(err)
+		}
+		f.Users[a.Username].Ip = string(ip)
+		log.Println(string(ip))
+
 	}
 	return f
 }
 
 // Login on Freenom
-func (f *Freenom) Login(uid int) *Freenom {
-	if f.checkLogin() {
-		return f
+func (u *User) isLogin() bool {
+	if u.checkLogin() {
+		return true
 	}
 
 	_,status := sendRequest(
+		u,
 		"POST",
 		loginURL,
 		`{"headers":{
@@ -125,24 +146,25 @@ func (f *Freenom) Login(uid int) *Freenom {
 			"Referer": "`+refererURL+`",
 		},}`,
 		url.Values{
-			"username": {f.Users[uid].UserName},
-			"password": {f.Users[uid].PassWord},
+			"username": {u.UserName},
+			"password": {u.PassWord},
 		}.Encode(),
 	)
 	log.Println("Post Login Status:",status)
 
-	u, _ := url.Parse(baseURL)
-	for _, authcook := range f.cookiejar.Cookies(u) {
+	url, _ := url.Parse(baseURL)
+	for _, authcook := range u.cookiejar.Cookies(url) {
 		if authKey == authcook.Name && authcook.Value == "" {
 			log.Println("AUTH error")
 		}
 		log.Println("log: cookie_id: ", authcook.Value)
 	}
-	return f
+	return true
 }
 
-func (f *Freenom) checkLogin() bool {
+func (u *User) checkLogin() bool {
 	body,status := sendRequest(
+		u,
 		"GET",
 		domainStatusURL,
 		`{"headers":{
@@ -152,71 +174,85 @@ func (f *Freenom) checkLogin() bool {
 	)
 	log.Println("Get RenewDomains Status:",status)
 
-	f.token = getParams(tokenREGEX, string(body))[0]["token"]
+	u.token = getParams(tokenREGEX, string(body))[0]["token"]
 	if !loginStatusREGEX.Match(body) {
 		log.Println("login state error no login")
 		return false
 	}
-	f.list = getParams(domainInfoREGEX, string(body))
+	u.list = getParams(domainInfoREGEX, string(body))
 	return true
 }
 
 
-//RenewDomains is renew domain name
-func (f *Freenom) RenewDomains(uid int) *Freenom {
-	if !f.checkLogin() {
-		return f
+//list domain
+func (u *User) DomainList() *User {
+	if !u.isLogin() {
+		return u
 	}
-	f.Users[uid].CheckTimes++
-	f.Users[uid].Domains = make(map[int]*Domain)
-	for i, d := range f.list {
-		tmp, _ := d["days"]
-		f.Users[uid].Domains[i] = &Domain{}
-		f.Users[uid].Domains[i].Days, _ = strconv.Atoi(tmp)
-		f.Users[uid].Domains[i].ID, _ = d["id"]
-		f.Users[uid].Domains[i].DomainName, _ = d["domain"]
-		if f.Users[uid].Domains[i].Days <= 14 {
+
+	u.Domains = make(map[string]*Domain)
+	for _, d := range u.list {
+		domain := d["domain"]
+		days, _ := d["days"]
+		u.Domains[domain] = &Domain{}
+		u.Domains[domain].Days, _ = strconv.Atoi(days)
+		u.Domains[domain].ID, _ = d["id"]
+		u.Domains[domain].DomainName, _ = d["domain"]
+	}
+	return u
+}
+
+
+//RenewDomains is renew domain name
+func (u *User) RenewDomains() *User {
+	if !u.isLogin() {
+		return u
+	}
+	u.CheckTimes++
+	for _, d := range u.Domains {
+		if d.Days <= 14 {
 			body,status := sendRequest(
+				u,
 				"POST",
 				renewDomainURL,
 				`{"headers":{
-					"Referer": "https://my.freenom.com/domains.php?a=renewdomain&domain=`+f.Users[uid].Domains[i].ID+`",
+					"Referer": "https://my.freenom.com/domains.php?a=renewdomain&domain=`+d.ID+`",
 					"Content-Type": "application/x-www-form-urlencoded",
 				},}`,
 				url.Values{
-					"token":     {f.token},
-					"renewalid": {f.Users[uid].Domains[i].ID},
-					"renewalperiod[" + f.Users[uid].Domains[i].ID + "]": {"12M"},
+					"token":     {u.token},
+					"renewalid": {d.ID},
+					"renewalperiod[" + d.ID + "]": {"12M"},
 					"paymentmethod": {"credit"},
 				}.Encode(),
 			)
 			log.Println("Post RenewDomains Status:",status)
 
 			if checkRenew.Match(body) {
-				f.Users[uid].Domains[i].RenewState = renewYes
+				d.RenewState = renewYes
 			} else {
 				log.Fatalln("renew error")
-				f.Users[uid].Domains[i].RenewState = renewErr
+				d.RenewState = renewErr
 			}
 		} else {
-			f.Users[uid].Domains[i].RenewState = renewNo
+			d.RenewState = renewNo
 		}
 	}
-	return f
+	return u
 }
 
 
 //add record
-func (f *Freenom) AddRecord(uid int,managedns string,name string,ip string) *Freenom {
-	if !f.checkLogin() {
-		return f
+func (u *User) AddRecord(managedns string,name string,ip string) *User {
+	if !u.isLogin() {
+		return u
 	}
 
-	f.Users[uid].Domains = make(map[int]*Domain)
-	for _, d := range f.list {
-		if d["domain"] == managedns {
-			requstUrl := refererURL + fmt.Sprintf("?managedns=%s&domainid=%s",managedns,d["id"])
+	for _, d := range u.Domains {
+		if d.DomainName == managedns {
+			requstUrl := refererURL + fmt.Sprintf("?managedns=%s&domainid=%s",managedns,d.ID)
 			_,_ = sendRequest(
+				u,
 				"POST",
 				requstUrl,
 				`{"headers":{` +
@@ -224,11 +260,11 @@ func (f *Freenom) AddRecord(uid int,managedns string,name string,ip string) *Fre
 					"Content-Type": "application/x-www-form-urlencoded",
 				},}`,
 				url.Values{
-					"token":     {f.token},
+					"token":     {u.token},
 					"dnsaction": {"add"},
 					"addrecord[0][name]":{name},
 					"addrecord[0][type]":{FreenomType_A},
-					"addrecord[0][ttl]":{"3600"},
+					"addrecord[0][ttl]":{"300"},
 					"addrecord[0][value]":{ip},//45.76.105.88
 					"addrecord[0][priority]":{""},
 					"addrecord[0][port]":{""},
@@ -246,23 +282,24 @@ func (f *Freenom) AddRecord(uid int,managedns string,name string,ip string) *Fre
 				}.Encode(),
 			)
 			log.Println("add success")
-			return f
+			return u
 		}
 	}
 	log.Println("add error")
-	return f
+	return u
 }
 
 //delete record
-func (f *Freenom) DeleteRecord(uid int,managedns string,name string,ip string) *Freenom {
-	if !f.checkLogin() {
-		return f
+func (u *User) DeleteRecord(managedns string,name string,ip string) *User {
+	if !u.isLogin() {
+		return u
 	}
-	f.Users[uid].Domains = make(map[int]*Domain)
-	for _, d := range f.list {
-		if d["domain"] == managedns {
-			requstUrl := refererURL + fmt.Sprintf("?managedns=%s&domainid=%s",managedns,d["id"])
+
+	for _, d := range u.Domains {
+		if d.DomainName == managedns {
+			requstUrl := refererURL + fmt.Sprintf("?managedns=%s&domainid=%s",managedns,d.ID)
 			_,_ = sendRequest(
+				u,
 				"GET",
 				requstUrl + fmt.Sprintf("&page=&records=A&dnsaction=delete&name=%s&value=%s&line=&ttl=3600&priority=&weight=&port=",name,ip),
 				`{"headers":{` +
@@ -272,23 +309,24 @@ func (f *Freenom) DeleteRecord(uid int,managedns string,name string,ip string) *
 				"",
 			)
 			log.Println("delete success")
-			return f
+			return u
 		}
 	}
 	log.Println("delete error")
-	return f
+	return u
 }
 
 //update record
-func (f *Freenom) UpdateRecord(uid int,managedns string,name string,ip string) *Freenom {
-	if !f.checkLogin() {
-		return f
+func (u *User) UpdateRecord(managedns string,name string) *User {
+	if !u.isLogin() {
+		return u
 	}
-	f.Users[uid].Domains = make(map[int]*Domain)
-	for _, d := range f.list {
-		if d["domain"] == managedns {
-			requstUrl := refererURL + fmt.Sprintf("?managedns=%s&domainid=%s",managedns,d["id"])
+	u.GetIp()
+	for _, d := range u.Domains {
+		if d.DomainName == managedns {
+			requstUrl := refererURL + fmt.Sprintf("?managedns=%s&domainid=%s",managedns,d.ID)
 			body,status := sendRequest(
+				u,
 				"GET",
 				requstUrl,
 				`{"headers":{` +
@@ -298,8 +336,6 @@ func (f *Freenom) UpdateRecord(uid int,managedns string,name string,ip string) *
 				"",
 			)
 
-
-			log.Println("Get UpdateRecord Status:",status)
 			// Load the HTML document
 			doc, err := goquery.NewDocumentFromReader(bytes.NewBuffer(body))
 			if err != nil {
@@ -331,12 +367,12 @@ func (f *Freenom) UpdateRecord(uid int,managedns string,name string,ip string) *
 				k5,_ := valueElem.Attr("name")
 				v5,_ := valueElem.Attr("value")
 
-				if len(name) > 0 {
-					if name == v3 {
-						v5 = ip
-					}
+				if len(name) > 0 && strings.ToUpper(name) == v3 && u.GetIp() {
+					v5 = u.Ip
+					log.Println("ip has change:",u.Ip)
+				} else {
+					return
 				}
-
 
 				urlParam[k1] = []string{v1}
 				urlParam[k2] = []string{v2}
@@ -345,9 +381,10 @@ func (f *Freenom) UpdateRecord(uid int,managedns string,name string,ip string) *
 				urlParam[k5] = []string{v5}
 			})
 
-			urlParam["token"] = []string{f.token}
+			urlParam["token"] = []string{u.token}
 			urlParam["dnsaction"] = []string{"modify"}
 			_,status = sendRequest(
+				u,
 				"POST",
 				requstUrl,
 				`{"headers":{` +
@@ -358,16 +395,17 @@ func (f *Freenom) UpdateRecord(uid int,managedns string,name string,ip string) *
 			)
 			log.Println("Get UpdateRecord3 Status:",status)
 			log.Println("update success")
-			return f
+			return u
 		}
 	}
 	log.Println("update error")
-	return f
+	return u
 }
 
 
-func (f *Freenom) GetIp() *Freenom {
+func (u *User) GetIp() bool {
 	body,_ := sendRequest(
+		u,
 		"GET",
 		"http://v4v6.ipv6-test.com/api/myip.php?json",
 		"",
@@ -376,13 +414,27 @@ func (f *Freenom) GetIp() *Freenom {
 
 	v := make(map[string]string)
 	json.Unmarshal(body,&v)
-	log.Println("ip:",v["address"]," ",v["proto"])
+	log.Println(v["proto"],":",v["address"])
 
-	return f
+	if v["address"] == u.Ip {
+		return false
+	}
+	u.Ip = v["address"]
+	f, err := os.OpenFile(u.UserName + ".txt", os.O_WRONLY|os.O_TRUNC|os.O_CREATE, os.ModePerm)
+	if err != nil {
+		log.Println(err)
+	}
+	_,err = f.Write([]byte(u.Ip))
+	if err != nil {
+		log.Println(err)
+	}
+	f.Close()
+	return true
 }
 
-func (f *Freenom) GetV4Ip() *Freenom {
+func (u *User) GetV4Ip() bool {
 	body,_ := sendRequest(
+		u,
 		"GET",
 		"http://v4.ipv6-test.com/api/myip.php?json",
 		"",
@@ -391,11 +443,27 @@ func (f *Freenom) GetV4Ip() *Freenom {
 	v := make(map[string]string)
 	json.Unmarshal(body,&v)
 	log.Println("ipv4:",v["address"]," ",v["proto"])
-	return f
+
+	if v["address"] == u.Ip {
+		return false
+	}
+	u.Ip = v["address"]
+	f, err := os.OpenFile(u.UserName + ".txt", os.O_WRONLY|os.O_TRUNC|os.O_CREATE, os.ModePerm)
+	if err != nil {
+		log.Println(err)
+	}
+	_,err = f.Write([]byte(u.Ip))
+	if err != nil {
+		log.Println(err)
+	}
+	f.Close()
+
+	return true
 }
 
-func (f *Freenom) GetV6Ip() *Freenom {
+func (u *User) GetV6Ip() bool {
 	body,_ := sendRequest(
+		u,
 		"GET",
 		"http://v6.ipv6-test.com/api/myip.php?json",
 		"",
@@ -404,18 +472,53 @@ func (f *Freenom) GetV6Ip() *Freenom {
 	v := make(map[string]string)
 	json.Unmarshal(body,&v)
 	log.Println("ipv6:",v["address"]," ",v["proto"])
-	return f
+
+	if v["address"] == u.Ip {
+		return false
+	}
+	u.Ip = v["address"]
+
+
+	f, err := os.OpenFile(u.UserName + ".txt", os.O_WRONLY|os.O_TRUNC|os.O_CREATE, os.ModePerm)
+	if err != nil {
+		log.Println(err)
+	}
+	_,err = f.Write([]byte(u.Ip))
+	if err != nil {
+		log.Println(err)
+	}
+	f.Close()
+
+	return true
 }
 
-func (f *Freenom) GetIp2() *Freenom {
+func (u *User) GetIp2() bool {
 	body,_ := sendRequest(
+		u,
 		"GET",
 		"http://ipv4.icanhazip.com/",
 		"",
 		"",
 	)
 	log.Println("ipv2:",body)
-	return f
+	ip := string(body)
+
+	if ip == u.Ip {
+		return false
+	}
+	u.Ip = ip
+
+	f, err := os.OpenFile(u.UserName + ".txt", os.O_WRONLY|os.O_TRUNC|os.O_CREATE, os.ModePerm)
+	if err != nil {
+		log.Println(err)
+	}
+	_,err = f.Write([]byte(u.Ip))
+	if err != nil {
+		log.Println(err)
+	}
+	f.Close()
+
+	return true
 }
 //api.ipify.org
 
@@ -442,13 +545,12 @@ func getParams(regEx *regexp.Regexp, url string) (paramsMaps map[int]map[string]
 /**
  * sendRequest just all in one
  */
-func sendRequest(method, furl, headers, datas string) ([]byte,string) {
+func sendRequest(u *User,method, furl, headers, datas string) ([]byte,string) {
 RETRY:
 	req, err := http.NewRequest(method, furl, strings.NewReader(datas))
 	if err != nil {
 		log.Fatal("Create http request error", err)
 	}
-	f := GetInstance()
 	if headers != "" {
 		headerObj := gjson.Get(headers, "headers")
 		headerObj.ForEach(func(key, value gjson.Result) bool {
@@ -456,7 +558,7 @@ RETRY:
 			return true
 		})
 	}
-	resp, err := f.client.Do(req)
+	resp, err := u.client.Do(req)
 	if err != nil {
 		log.Println("http response error: ", err)
 		time.Sleep(3 * time.Second)

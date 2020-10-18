@@ -19,7 +19,7 @@
                 <td>ID</td>
                 <td>RenewState</td>      
             </tr>
-            {{range $Domain := $User.Domains}}
+            {{range $k,$Domain := $User.Domains}}
             <tr>
                 <td>{{ $Domain.DomainName }}</td>
                 <td>{{ $Domain.Days}}</td>
