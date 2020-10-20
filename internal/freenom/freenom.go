@@ -172,7 +172,6 @@ func (u *User) checkLogin() bool {
 		},}`,
 		"",
 	)
-	log.Println("Get RenewDomains Status:",status)
 
 	u.token = getParams(tokenREGEX, string(body))[0]["token"]
 	if !loginStatusREGEX.Match(body) {
@@ -226,7 +225,6 @@ func (u *User) RenewDomains() *User {
 					"paymentmethod": {"credit"},
 				}.Encode(),
 			)
-			log.Println("Post RenewDomains Status:",status)
 
 			if checkRenew.Match(body) {
 				d.RenewState = renewYes
