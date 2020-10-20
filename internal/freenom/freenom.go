@@ -318,10 +318,12 @@ func (u *User) DeleteRecord(managedns string,name string,ip string) *User {
 
 //update record
 func (u *User) UpdateRecord(managedns string,name string) *User {
-	if !u.isLogin() {
+	u.isLogin()
+
+	if !u.GetIp() {
+		log.Println("ip no change")
 		return u
 	}
-	u.GetIp()
 	for _, d := range u.Domains {
 		if d.DomainName == managedns {
 			requstUrl := refererURL + fmt.Sprintf("?managedns=%s&domainid=%s",managedns,d.ID)
@@ -367,7 +369,7 @@ func (u *User) UpdateRecord(managedns string,name string) *User {
 				k5,_ := valueElem.Attr("name")
 				v5,_ := valueElem.Attr("value")
 
-				if len(name) > 0 && strings.ToUpper(name) == v3 && u.GetIp() {
+				if len(name) > 0 && strings.ToUpper(name) == v3 {
 					v5 = u.Ip
 					log.Println("ip has change:",u.Ip)
 				} else {
