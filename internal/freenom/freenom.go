@@ -163,7 +163,7 @@ func (u *User) isLogin() bool {
 }
 
 func (u *User) checkLogin() bool {
-	body,status := sendRequest(
+	body,_ := sendRequest(
 		u,
 		"GET",
 		domainStatusURL,
@@ -210,7 +210,7 @@ func (u *User) RenewDomains() *User {
 	u.CheckTimes++
 	for _, d := range u.Domains {
 		if d.Days <= 14 {
-			body,status := sendRequest(
+			body,_ := sendRequest(
 				u,
 				"POST",
 				renewDomainURL,
